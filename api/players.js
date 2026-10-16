@@ -1,4 +1,4 @@
-const DEFAULT_TARGET = 'http://88.162.131.41:8100/sleepware/players.json';
+const DEFAULT_TARGET = 'https://fairybutterfly.duckdns.org/sleepware/players.json';
 
 module.exports = async (req, res) => {
   const target = process.env.MAP_DATA_URL || DEFAULT_TARGET;
