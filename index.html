@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serveur Minecraft - Tableau de bord</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --card: #1e222a;
+    --card2: #262b35;
+    --text: #e8ecf1;
+    --muted: #8b95a5;
+    --accent: #4da3ff;
+    --green: #3ecf8e;
+    --orange: #ffb020;
+    --red: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 26px;
+    background: var(--card);
+    border-bottom: 1px solid #2b313c;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header h1 { font-size: 20px; margin: 0; }
+  .status {
+    font-size: 13px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--card2);
+    color: var(--muted);
+  }
+  .status.on { color: var(--green); }
+  .status.off { color: var(--red); }
+  .btn {
+    margin-left: auto;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    padding: 9px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  main { max-width: 1100px; margin: 0 auto; padding: 22px 16px 60px; }
+  h2 { font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 28px 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid #2b313c;
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 16px; }
+  .card .row { font-size: 13.5px; color: var(--muted); margin: 3px 0; }
+  .card .row b { color: var(--text); font-weight: 600; }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  select, input {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid #2b313c;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #262b35; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; }
+  tr:hover td { background: #20242d; }
+  td.dim { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 14px; padding: 14px 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Serveur Minecraft</h1>
+  <span id="status" class="status">chargement...</span>
+  <a class="btn" id="mapLink" href="http://88.162.131.41:8100" target="_blank" rel="noopener">Ouvrir la carte 3D en direct</a>
+</header>
+<main>
+  <h2>Joueurs</h2>
+  <div id="players" class="grid"></div>
+
+  <h2>Morts</h2>
+  <div class="filters">
+    <select id="fPlayer"><option value="">Tous les joueurs</option></select>
+    <select id="fBiome"><option value="">Tous les biomes</option></select>
+    <select id="fDim"><option value="">Toutes les dimensions</option></select>
+    <input id="fSearch" type="text" placeholder="Rechercher (cause, coordonnees...)">
+  </div>
+  <div id="deaths"></div>
+</main>
+<script>
+/* Si ton IP publique change, modifie cette URL (et la variable MAP_DATA_URL sur Vercel) */
+const LIVE_MAP_URL = 'http://88.162.131.41:8100';
+document.getElementById('mapLink').href = LIVE_MAP_URL;
+
+const DIM_NAMES = {
+  'minecraft:overworld': 'Overworld',
+  'minecraft:the_nether': 'Nether',
+  'minecraft:the_end': 'End'
+};
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtDate(ms) {
+  if (!ms) return '-';
+  return new Date(ms).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function dimName(d) { return DIM_NAMES[d] || d || '-'; }
+
+let allData = null;
+
+async function load() {
+  const status = document.getElementById('status');
+  try {
+    const r = await fetch('/api/players', { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok || !j.data) {
+      status.textContent = 'Serveur hors ligne';
+      status.className = 'status off';
+      return;
+    }
+    allData = j.data;
+    const age = Date.now() - (allData.updated || 0);
+    if (age < 120000) {
+      status.textContent = 'En direct';
+      status.className = 'status on';
+    } else {
+      status.textContent = 'Derniere mise a jour : ' + fmtDate(allData.updated);
+      status.className = 'status';
+    }
+    render();
+  } catch (e) {
+    status.textContent = 'Serveur hors ligne';
+    status.className = 'status off';
+  }
+}
+
+function playersArray(data) {
+  return Object.entries(data.players || {}).map(([uuid, p]) => ({ uuid, ...p }));
+}
+
+function render() {
+  if (!allData) return;
+  renderPlayers();
+  renderFilters();
+  renderDeaths();
+}
+
+function renderPlayers() {
+  const el = document.getElementById('players');
+  const players = playersArray(allData);
+  if (!players.length) {
+    el.innerHTML = '<div class="empty">Aucun joueur enregistre pour le moment.</div>';
+    return;
+  }
+  players.sort((a, b) => (b.lastSeen?.time || 0) - (a.lastSeen?.time || 0));
+  el.innerHTML = players.map(p => {
+    const ls = p.lastSeen;
+    const trails = Object.values(p.trails || {}).reduce((n, t) => n + (t?.length || 0), 0);
+    return '<div class="card"><h3>' + esc(p.name || '?') + '</h3>'
+      + (ls
+        ? '<div class="row">Derniere connexion : <b>' + dimName(ls.dim) + ' ' + ls.x + ', ' + ls.y + ', ' + ls.z + '</b></div>'
+          + '<div class="row">Biome : <b>' + esc(ls.biome) + '</b></div>'
+          + '<div class="row">Le : <b>' + fmtDate(ls.time) + '</b></div>'
+        : '<div class="row">Jamais connecte pour le moment.</div>')
+      + '<div class="row">Morts : <b>' + (p.deaths?.length || 0) + '</b> · Points de trace : <b>' + trails + '</b></div>'
+      + '</div>';
+  }).join('');
+}
+
+function renderFilters() {
+  const players = playersArray(allData).map(p => p.name).filter(Boolean);
+  const deaths = allDeaths();
+  const biomes = [...new Set(deaths.map(d => d.biome).filter(Boolean))].sort();
+  const dims = [...new Set(deaths.map(d => d.dim).filter(Boolean))].sort();
+
+  fillSelect('fPlayer', players.sort(), 'Tous les joueurs', 'value');
+  fillSelect('fBiome', biomes, 'Tous les biomes', 'value');
+  fillSelect('fDim', dims, 'Toutes les dimensions', 'value', dimName);
+}
+
+function fillSelect(id, values, placeholder, forceValue, labeler) {
+  const sel = document.getElementById(id);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">' + placeholder + '</option>'
+    + values.map(v => '<option value="' + esc(v) + '">' + esc(labeler ? labeler(v) : v) + '</option>').join('');
+  if (values.includes(current)) sel.value = current;
+}
+
+function allDeaths() {
+  const out = [];
+  for (const p of playersArray(allData)) {
+    for (const d of (p.deaths || [])) out.push(d);
+  }
+  return out.sort((a, b) => (b.time || 0) - (a.time || 0));
+}
+
+function renderDeaths() {
+  const el = document.getElementById('deaths');
+  const fp = document.getElementById('fPlayer').value;
+  const fb = document.getElementById('fBiome').value;
+  const fd = document.getElementById('fDim').value;
+  const fs = document.getElementById('fSearch').value.trim().toLowerCase();
+
+  let deaths = allDeaths();
+  if (fp) deaths = deaths.filter(d => d.name === fp);
+  if (fb) deaths = deaths.filter(d => d.biome === fb);
+  if (fd) deaths = deaths.filter(d => d.dim === fd);
+  if (fs) {
+    deaths = deaths.filter(d =>
+      (d.cause || '').toLowerCase().includes(fs)
+      || (d.name || '').toLowerCase().includes(fs)
+      || (d.biome || '').toLowerCase().includes(fs)
+      || (d.x + ', ' + d.y + ', ' + d.z).includes(fs));
+  }
+  deaths = deaths.slice(0, 300);
+
+  if (!deaths.length) {
+    el.innerHTML = '<div class="empty">Aucune mort a afficher.</div>';
+    return;
+  }
+  el.innerHTML = '<table><thead><tr><th>Joueur</th><th>Cause</th><th>Position</th><th>Biome</th><th>Dimension</th><th>Date</th></tr></thead><tbody>'
+    + deaths.map(d =>
+      '<tr><td>' + esc(d.name) + '</td>'
+      + '<td>' + esc(d.cause || '-') + '</td>'
+      + '<td>' + d.x + ', ' + d.y + ', ' + d.z + '</td>'
+      + '<td>' + esc(d.biome || '-') + '</td>'
+      + '<td class="dim">' + esc(dimName(d.dim)) + '</td>'
+      + '<td class="dim">' + fmtDate(d.time) + '</td></tr>').join('')
+    + '</tbody></table>';
+}
+
+for (const id of ['fPlayer', 'fBiome', 'fDim', 'fSearch']) {
+  document.getElementById(id).addEventListener('input', renderDeaths);
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
